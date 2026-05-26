@@ -1,228 +1,191 @@
 from __future__ import annotations
 
-import json
-import pkgutil
-import textwrap
-import uuid
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Final
 
-from ._vegafusion_data import compile_with_vegafusion, using_vegafusion
-from .mimebundle import spec_to_mimebundle
-from .plugin_registry import PluginEnabler, PluginRegistry
-from .schemapi import validate_jsonschema
+from altair.utils.mimebundle import spec_to_mimebundle
+from altair.vegalite.display import (
+    Displayable,
+    HTMLRenderer,
+    RendererRegistry,
+    default_renderer_base,
+    json_renderer_base,
+)
+
+from .schema import SCHEMA_VERSION
 
 if TYPE_CHECKING:
-    from typing import TypeAlias
-
-# ==============================================================================
-# Renderer registry
-# ==============================================================================
-# MimeBundleType needs to be the same as what are acceptable return values
-# for _repr_mimebundle_,
-# see https://ipython.readthedocs.io/en/stable/config/integrating.html#MyObject._repr_mimebundle_
-MimeBundleDataType: TypeAlias = dict[str, Any]
-MimeBundleMetaDataType: TypeAlias = dict[str, Any]
-MimeBundleType: TypeAlias = (
-    MimeBundleDataType | tuple[MimeBundleDataType, MimeBundleMetaDataType]
-)
-RendererType: TypeAlias = Callable[..., MimeBundleType]
-# Subtype of MimeBundleType as more specific in the values of the dictionaries
-
-DefaultRendererReturnType: TypeAlias = tuple[
-    dict[str, str | dict[str, Any]], dict[str, dict[str, Any]]
-]
+    from altair.vegalite.display import DefaultRendererReturnType
 
 
-class RendererRegistry(PluginRegistry[RendererType, MimeBundleType]):
-    entrypoint_err_messages = {
-        "notebook": textwrap.dedent(
-            """
-            To use the 'notebook' renderer, you must install the vega package
-            and the associated Jupyter extension.
-            See https://altair-viz.github.io/getting_started/installation.html
-            for more information.
-            """
-        ),
-    }
-
-    def set_embed_options(
-        self,
-        defaultStyle: bool | str | None = None,
-        renderer: str | None = None,
-        width: int | None = None,
-        height: int | None = None,
-        padding: int | None = None,
-        scaleFactor: float | None = None,
-        actions: bool | dict[str, bool] | None = None,
-        format_locale: str | dict | None = None,
-        time_format_locale: str | dict | None = None,
-        **kwargs,
-    ) -> PluginEnabler:
-        """
-        Set options for embeddings of Vega & Vega-Lite charts.
-
-        Options are fully documented at https://github.com/vega/vega-embed.
-        Similar to the `enable()` method, this can be used as either
-        a persistent global switch, or as a temporary local setting using
-        a context manager (i.e. a `with` statement).
-
-        Parameters
-        ----------
-        defaultStyle : bool or string
-            Specify a default stylesheet for embed actions.
-        renderer : string
-            The renderer to use for the view. One of "canvas" (default) or "svg"
-        width : integer
-            The view width in pixels
-        height : integer
-            The view height in pixels
-        padding : integer
-            The view padding in pixels
-        scaleFactor : number
-            The number by which to multiply the width and height (default 1)
-            of an exported PNG or SVG image.
-        actions : bool or dict
-            Determines if action links ("Export as PNG/SVG", "View Source",
-            "View Vega" (only for Vega-Lite), "Open in Vega Editor") are
-            included with the embedded view. If the value is true, all action
-            links will be shown and none if the value is false. This property
-            can take a key-value mapping object that maps keys (export, source,
-            compiled, editor) to boolean values for determining if
-            each action link should be shown.
-        format_locale : str or dict
-            d3-format locale name or dictionary. Defaults to "en-US" for United States English.
-            See https://github.com/d3/d3-format/tree/main/locale for available names and example
-            definitions.
-        time_format_locale : str or dict
-            d3-time-format locale name or dictionary. Defaults to "en-US" for United States English.
-            See https://github.com/d3/d3-time-format/tree/main/locale for available names and example
-            definitions.
-        **kwargs :
-            Additional options are passed directly to embed options.
-        """
-        options: dict[str, bool | str | float | dict[str, bool] | None] = {
-            "defaultStyle": defaultStyle,
-            "renderer": renderer,
-            "width": width,
-            "height": height,
-            "padding": padding,
-            "scaleFactor": scaleFactor,
-            "actions": actions,
-            "formatLocale": format_locale,
-            "timeFormatLocale": time_format_locale,
-        }
-        kwargs.update({key: val for key, val in options.items() if val is not None})
-        return self.enable(None, embed_options=kwargs)
+VEGALITE_VERSION: Final = SCHEMA_VERSION.lstrip("v")
+VEGA_VERSION: Final = "6"
+VEGAEMBED_VERSION: Final = "7"
 
 
 # ==============================================================================
-# VegaLite v1/v2 renderer logic
+# VegaLite v6 renderer logic
 # ==============================================================================
 
 
-class Displayable:
-    """
-    A base display class for VegaLite v1/v2.
+# The MIME type for Vega-Lite 6.x releases.
+VEGALITE_MIME_TYPE: Final = "application/vnd.vegalite.v6.json"
 
-    This class takes a VegaLite v1/v2 spec and does the following:
+# The MIME type for Vega 6.x releases.
+VEGA_MIME_TYPE: Final = "application/vnd.vega.v6.json"
 
-    1. Optionally validates the spec against a schema.
-    2. Uses the RendererPlugin to grab a renderer and call it when the
-       IPython/Jupyter display method (_repr_mimebundle_) is called.
+# The entry point group that can be used by other packages to declare other
+# renderers that will be auto-detected. Explicit registration is also
+# allowed by the PluginRegistery API.
+ENTRY_POINT_GROUP: Final = "altair.vegalite.v6.renderer"
 
-    The spec passed to this class must be fully schema compliant and already
-    have the data portion of the spec fully processed and ready to serialize.
-    In practice, this means, the data portion of the spec should have been passed
-    through appropriate data model transformers.
-    """
+# The display message when rendering fails
+DEFAULT_DISPLAY: Final = f"""\
+<VegaLite {VEGALITE_VERSION.split(".")[0]} object>
 
-    renderers: RendererRegistry | None = None
-    schema_path = ("altair", "")
+If you see this message, it means the renderer has not been properly enabled
+for the frontend that you are using. For more information, see
+https://altair-viz.github.io/user_guide/display_frontends.html#troubleshooting
+"""
 
-    def __init__(self, spec: dict[str, Any], validate: bool = False) -> None:
-        self.spec = spec
-        self.validate = validate
-        self._validate()
+renderers = RendererRegistry(entry_point_group=ENTRY_POINT_GROUP)
 
-    def _validate(self) -> None:
-        """Validate the spec against the schema."""
-        data = pkgutil.get_data(*self.schema_path)
-        assert data is not None
-        schema_dict: dict[str, Any] = json.loads(data.decode("utf-8"))
-        validate_jsonschema(
-            self.spec,
-            schema_dict,
-        )
-
-    def _repr_mimebundle_(
-        self, include: Any = None, exclude: Any = None
-    ) -> MimeBundleType:
-        """Return a MIME bundle for display in Jupyter frontends."""
-        if self.renderers is not None:
-            renderer_func = self.renderers.get()
-            assert renderer_func is not None
-            return renderer_func(self.spec)
-        else:
-            return {}
+here = str(Path(__file__).parent)
 
 
-def default_renderer_base(
-    spec: dict[str, Any], mime_type: str, str_repr: str, **options
-) -> DefaultRendererReturnType:
-    """
-    A default renderer for Vega or VegaLite that works for modern frontends.
-
-    This renderer works with modern frontends (JupyterLab, nteract) that know
-    how to render the custom VegaLite MIME type listed above.
-    """
-    # Local import to avoid circular ImportError
-    from altair.vegalite.v6.display import VEGA_MIME_TYPE, VEGALITE_MIME_TYPE
-
-    assert isinstance(spec, dict)
-    bundle: dict[str, str | dict] = {}
-    metadata: dict[str, dict[str, Any]] = {}
-
-    if using_vegafusion():
-        spec = compile_with_vegafusion(spec)
-
-        # Swap mimetype from Vega-Lite to Vega.
-        # If mimetype was JSON, leave it alone
-        if mime_type == VEGALITE_MIME_TYPE:
-            mime_type = VEGA_MIME_TYPE
-
-    bundle[mime_type] = spec
-    bundle["text/plain"] = str_repr
-    if options:
-        metadata[mime_type] = options
-    return bundle, metadata
+def mimetype_renderer(spec: dict, **metadata) -> DefaultRendererReturnType:
+    return default_renderer_base(spec, VEGALITE_MIME_TYPE, DEFAULT_DISPLAY, **metadata)
 
 
-def json_renderer_base(
-    spec: dict[str, Any], str_repr: str, **options
-) -> DefaultRendererReturnType:
-    """
-    A renderer that returns a MIME type of application/json.
+def json_renderer(spec: dict, **metadata) -> DefaultRendererReturnType:
+    return json_renderer_base(spec, DEFAULT_DISPLAY, **metadata)
 
-    In JupyterLab/nteract this is rendered as a nice JSON tree.
-    """
-    return default_renderer_base(
-        spec, mime_type="application/json", str_repr=str_repr, **options
+
+def png_renderer(spec: dict, **metadata) -> dict[str, bytes]:
+    # To get proper return value type, would need to write complex
+    # overload signatures for spec_to_mimebundle based on `format`
+    return spec_to_mimebundle(  # type: ignore[return-value]
+        spec,
+        format="png",
+        mode="vega-lite",
+        vega_version=VEGA_VERSION,
+        vegaembed_version=VEGAEMBED_VERSION,
+        vegalite_version=VEGALITE_VERSION,
+        **metadata,
     )
 
 
-class HTMLRenderer:
-    """Object to render charts as HTML, with a unique output div each time."""
+def svg_renderer(spec: dict, **metadata) -> dict[str, str]:
+    # To get proper return value type, would need to write complex
+    # overload signatures for spec_to_mimebundle based on `format`
+    return spec_to_mimebundle(
+        spec,
+        format="svg",
+        mode="vega-lite",
+        vega_version=VEGA_VERSION,
+        vegaembed_version=VEGAEMBED_VERSION,
+        vegalite_version=VEGALITE_VERSION,
+        **metadata,
+    )
 
-    def __init__(self, output_div: str = "altair-viz-{}", **kwargs) -> None:
-        self._output_div = output_div
-        self.kwargs = kwargs
 
-    @property
-    def output_div(self) -> str:
-        return self._output_div.format(uuid.uuid4().hex)
+def jupyter_renderer(spec: dict, **metadata):
+    """Render chart using the JupyterChart Jupyter Widget."""
+    from altair import Chart, JupyterChart
 
-    def __call__(self, spec: dict[str, Any], **metadata) -> dict[str, str]:
-        kwargs = self.kwargs.copy()
-        kwargs.update(**metadata, output_div=self.output_div)
-        return spec_to_mimebundle(spec, format="html", **kwargs)
+    # Configure offline mode
+    offline = metadata.get("offline", False)
+
+    # mypy doesn't see the enable_offline class method for some reason
+    JupyterChart.enable_offline(offline=offline)  # type: ignore[attr-defined]
+
+    # propagate embed options
+    embed_options = metadata.get("embed_options")
+
+    # Need to ignore attr-defined mypy rule because mypy doesn't see _repr_mimebundle_
+    # conditionally defined in AnyWidget
+    return JupyterChart(
+        chart=Chart.from_dict(spec), embed_options=embed_options
+    )._repr_mimebundle_()  # type: ignore[attr-defined]
+
+
+def browser_renderer(
+    spec: dict, offline=False, using=None, port=0, **metadata
+) -> dict[str, str]:
+    from altair.utils._show import open_html_in_browser
+
+    if offline:
+        metadata["template"] = "inline"
+    mimebundle = spec_to_mimebundle(
+        spec,
+        format="html",
+        mode="vega-lite",
+        vega_version=VEGA_VERSION,
+        vegaembed_version=VEGAEMBED_VERSION,
+        vegalite_version=VEGALITE_VERSION,
+        **metadata,
+    )
+    html = mimebundle["text/html"]
+    open_html_in_browser(html, using=using, port=port)
+    return {}
+
+
+html_renderer = HTMLRenderer(
+    mode="vega-lite",
+    template="universal",
+    vega_version=VEGA_VERSION,
+    vegaembed_version=VEGAEMBED_VERSION,
+    vegalite_version=VEGALITE_VERSION,
+)
+
+
+olli_renderer = HTMLRenderer(
+    mode="vega-lite",
+    template="olli",
+    vega_version=VEGA_VERSION,
+    vegaembed_version=VEGAEMBED_VERSION,
+    vegalite_version=VEGALITE_VERSION,
+)
+
+renderers.register("default", html_renderer)
+renderers.register("html", html_renderer)
+renderers.register("colab", html_renderer)
+renderers.register("kaggle", html_renderer)
+renderers.register("zeppelin", html_renderer)
+renderers.register("mimetype", mimetype_renderer)
+renderers.register("jupyterlab", mimetype_renderer)
+renderers.register("nteract", mimetype_renderer)
+renderers.register("json", json_renderer)
+renderers.register("png", png_renderer)
+renderers.register("svg", svg_renderer)
+# FIXME: Caused by upstream # type: ignore[unreachable]
+# https://github.com/manzt/anywidget/blob/b7961305a7304f4d3def1fafef0df65db56cf41e/anywidget/widget.py#L80-L81
+renderers.register("jupyter", jupyter_renderer)  # pyright: ignore[reportArgumentType]
+renderers.register("browser", browser_renderer)
+renderers.register("olli", olli_renderer)
+renderers.enable("default")
+
+
+class VegaLite(Displayable):
+    """An IPython/Jupyter display class for rendering VegaLite 6."""
+
+    renderers = renderers
+    schema_path = (__name__, "schema/vega-lite-schema.json")
+
+
+def vegalite(spec: dict, validate: bool = True) -> None:
+    """
+    Render and optionally validate a VegaLite 6 spec.
+
+    This will use the currently enabled renderer to render the spec.
+
+    Parameters
+    ----------
+    spec: dict
+        A fully compliant VegaLite 6 spec, with the data portion fully processed.
+    validate: bool
+        Should the spec be validated against the VegaLite 6 schema?
+    """
+    from IPython.display import display
+
+    display(VegaLite(spec, validate=validate))
