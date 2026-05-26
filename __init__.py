@@ -1,21 +1,96 @@
-try:
-    import anywidget  # noqa: F401
-except ImportError:
-    # When anywidget isn't available, create stand-in JupyterChart class
-    # that raises an informative import error on construction. This
-    # way we can make JupyterChart available in the altair namespace
-    # when anywidget is not installed
-    class JupyterChart:
-        def __init__(self, *args, **kwargs):
-            msg = (
-                "The Altair JupyterChart requires the anywidget \n"
-                "Python package which may be installed using pip with\n"
-                "    pip install anywidget\n"
-                "or using conda with\n"
-                "    conda install -c conda-forge anywidget\n"
-                "Afterwards, you will need to restart your Python kernel."
-            )
-            raise ImportError(msg)
+"""Public types to ease integrating with `altair`."""
 
-else:
-    from .jupyter_chart import JupyterChart  # noqa: F401
+from __future__ import annotations
+
+__all__ = [
+    "ChannelAngle",
+    "ChannelColor",
+    "ChannelColumn",
+    "ChannelDescription",
+    "ChannelDetail",
+    "ChannelFacet",
+    "ChannelFill",
+    "ChannelFillOpacity",
+    "ChannelHref",
+    "ChannelKey",
+    "ChannelLatitude",
+    "ChannelLatitude2",
+    "ChannelLongitude",
+    "ChannelLongitude2",
+    "ChannelOpacity",
+    "ChannelOrder",
+    "ChannelRadius",
+    "ChannelRadius2",
+    "ChannelRow",
+    "ChannelShape",
+    "ChannelSize",
+    "ChannelStroke",
+    "ChannelStrokeDash",
+    "ChannelStrokeOpacity",
+    "ChannelStrokeWidth",
+    "ChannelText",
+    "ChannelTheta",
+    "ChannelTheta2",
+    "ChannelTooltip",
+    "ChannelUrl",
+    "ChannelX",
+    "ChannelX2",
+    "ChannelXError",
+    "ChannelXError2",
+    "ChannelXOffset",
+    "ChannelY",
+    "ChannelY2",
+    "ChannelYError",
+    "ChannelYError2",
+    "ChannelYOffset",
+    "ChartType",
+    "EncodeKwds",
+    "Optional",
+    "is_chart_type",
+]
+
+from altair.utils.schemapi import Optional
+from altair.vegalite.v6.api import ChartType, is_chart_type
+from altair.vegalite.v6.schema.channels import (
+    ChannelAngle,
+    ChannelColor,
+    ChannelColumn,
+    ChannelDescription,
+    ChannelDetail,
+    ChannelFacet,
+    ChannelFill,
+    ChannelFillOpacity,
+    ChannelHref,
+    ChannelKey,
+    ChannelLatitude,
+    ChannelLatitude2,
+    ChannelLongitude,
+    ChannelLongitude2,
+    ChannelOpacity,
+    ChannelOrder,
+    ChannelRadius,
+    ChannelRadius2,
+    ChannelRow,
+    ChannelShape,
+    ChannelSize,
+    ChannelStroke,
+    ChannelStrokeDash,
+    ChannelStrokeOpacity,
+    ChannelStrokeWidth,
+    ChannelText,
+    ChannelTheta,
+    ChannelTheta2,
+    ChannelTooltip,
+    ChannelUrl,
+    ChannelX,
+    ChannelX2,
+    ChannelXError,
+    ChannelXError2,
+    ChannelXOffset,
+    ChannelY,
+    ChannelY2,
+    ChannelYError,
+    ChannelYError2,
+    ChannelYOffset,
+    EncodeKwds,
+)
