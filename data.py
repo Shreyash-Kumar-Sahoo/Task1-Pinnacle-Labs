@@ -1,10 +1,12 @@
-from typing import Final
+from __future__ import annotations
 
-from altair.utils._vegafusion_data import vegafusion_data_transformer
-from altair.vegalite.data import (
-    DataTransformerRegistry,
+from typing import TYPE_CHECKING, overload
+
+from altair.utils.core import sanitize_pandas_dataframe
+from altair.utils.data import DataTransformerRegistry as _DataTransformerRegistry
+from altair.utils.data import (
     MaxRowsError,
-    default_data_transformer,
+    check_data_type,
     limit_rows,
     sample,
     to_csv,
@@ -12,30 +14,55 @@ from altair.vegalite.data import (
     to_values,
 )
 
-# ==============================================================================
-# VegaLite 6 data transformers
-# ==============================================================================
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from altair.utils.data import DataType, ToValuesReturnType
+    from altair.utils.plugin_registry import PluginEnabler
 
 
-ENTRY_POINT_GROUP: Final = "altair.vegalite.v6.data_transformer"
+@overload
+def default_data_transformer(
+    data: None = ..., max_rows: int = ...
+) -> Callable[[DataType], ToValuesReturnType]: ...
+@overload
+def default_data_transformer(
+    data: DataType, max_rows: int = ...
+) -> ToValuesReturnType: ...
+def default_data_transformer(
+    data: DataType | None = None, max_rows: int = 5000
+) -> Callable[[DataType], ToValuesReturnType] | ToValuesReturnType:
+    if data is None:
+
+        def pipe(data: DataType, /) -> ToValuesReturnType:
+            data = limit_rows(data, max_rows=max_rows)
+            return to_values(data)
+
+        return pipe
+
+    else:
+        return to_values(limit_rows(data, max_rows=max_rows))
 
 
-data_transformers = DataTransformerRegistry(entry_point_group=ENTRY_POINT_GROUP)
-data_transformers.register("default", default_data_transformer)
-data_transformers.register("json", to_json)
-# FIXME: `to_csv` cannot accept all `DataType` https://github.com/vega/altair/issues/3441
-data_transformers.register("csv", to_csv)  # type: ignore[arg-type]
-data_transformers.register("vegafusion", vegafusion_data_transformer)
-data_transformers.enable("default")
+class DataTransformerRegistry(_DataTransformerRegistry):
+    def disable_max_rows(self) -> PluginEnabler:
+        """Disable the MaxRowsError."""
+        options = self.options
+        if self.active in {"default", "vegafusion"}:
+            options = options.copy()
+            options["max_rows"] = None
+        return self.enable(**options)
 
 
 __all__ = (
+    "DataTransformerRegistry",
     "MaxRowsError",
+    "check_data_type",
     "default_data_transformer",
     "limit_rows",
     "sample",
+    "sanitize_pandas_dataframe",
     "to_csv",
     "to_json",
     "to_values",
-    "vegafusion_data_transformer",
 )
