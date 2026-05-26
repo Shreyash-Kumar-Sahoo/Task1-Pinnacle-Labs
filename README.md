@@ -1,26 +1,2 @@
-# Resume Parser
-
-A Resume Parser developed using Python and Streamlit.
-
-## Features
-
-- Upload PDF Resume
-- Upload DOCX Resume
-- Extract Name
-- Extract Email
-- Extract Phone Number
-- Extract Skills
-- Extract Education Information
-
-## Technologies Used
-
-- Python
-- Streamlit
-- pdfplumber
-- python-docx
-
-## Run Project
-
-pip install -r requirements.txt
-
-streamlit run app.py
+# JupyterChart
+This directory contains the JavaScript portion of the Altair `JupyterChart`. The `JupyterChart` is based on the [AnyWidget](https://anywidget.dev/) project.
